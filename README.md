@@ -3,6 +3,9 @@
 The "hello" page (teal/blue breathing blobs, random multilingual greetings every 2–4 s)
 with the liquid-metal morph as the word transition. Astro + TypeScript, no UI framework.
 
+## AI Disclaimer
+Adapted by AI to add liquid metal effect
+
 ```bash
 npm install
 npm run dev       # http://localhost:4321
