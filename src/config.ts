@@ -5,8 +5,8 @@ export const metal = {
   colorTint: [0xb8 / 255, 0xb8 / 255, 0xb8 / 255] as [number, number, number],
   repetition: 2, // stripe density
   softness: 0.1, // 0 = hard stripe edges, 1 = smooth
-  shiftRed: 0.3, // chromatic dispersion
-  shiftBlue: 0.3,
+  shiftRed: 0.2, // chromatic dispersion
+  shiftBlue: 0.5,
   distortion: 1, // noise wobble on the stripes
   contour: 0.4, // how much the stripes bend around the shape edges
   angle: 70, // stripe direction (degrees)

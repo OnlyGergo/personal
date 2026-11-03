@@ -389,11 +389,10 @@ export function startLiquid(initialCanvas: HTMLCanvasElement): () => void {
     const k = fontPx / 107;
     const blurPx = presence <= 0 ? 100 : Math.min(8 / presence - 8, 100);
     const away = 1 - presence;
-    const dy = (role === "out" ? -1 : 1) * motion.drift * dpr * away;
     const s = 1 + ((role === "out" ? motion.exitScale : motion.enterScale) - 1) * away;
 
     tctx.save();
-    tctx.translate(W / 2, H / 2 + dy);
+    tctx.translate(W / 2, H / 2);
     tctx.scale(s, s);
     tctx.filter = blurPx * k > 0.01 ? `blur(${blurPx * k}px)` : "none";
     tctx.globalAlpha = op;
@@ -471,3 +470,4 @@ export function startLiquid(initialCanvas: HTMLCanvasElement): () => void {
     renderer.dispose();
   };
 }
+
