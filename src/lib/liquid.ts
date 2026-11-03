@@ -359,7 +359,7 @@ export function startLiquid(initialCanvas: HTMLCanvasElement): () => void {
     H = Math.max(1, Math.round(canvas.clientHeight * dpr));
     textCanvas.width = W;
     textCanvas.height = H;
-    fontPx = Math.min(canvas.clientWidth / 6, 150) * dpr;
+    fontPx = Math.min(canvas.clientWidth / 3, 150) * dpr;
   };
   const resize = () => {
     measure();
