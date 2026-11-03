@@ -1,0 +1,86 @@
+---
+import "@fontsource/raleway/900.css";
+import { blob, colors } from "../config";
+---
+
+<div class="lh-root">
+  <div class="lh-blob lh-blob-1"></div>
+  <div class="lh-blob lh-blob-2"></div>
+  <canvas class="lh-canvas"></canvas>
+</div>
+
+<script>
+  import { startLiquid } from "../lib/liquid";
+
+  const canvas = document.querySelector<HTMLCanvasElement>(".lh-canvas");
+  if (canvas) {
+    const stop = startLiquid(canvas);
+    // Clean up if the page is swapped out (e.g. Astro view transitions)
+    document.addEventListener("astro:before-swap", stop, { once: true });
+  }
+</script>
+
+<style
+  define:vars={{
+    bg: colors.bg,
+    blob1: colors.blob1,
+    blob2: colors.blob2,
+    blobOpacity: blob.opacity,
+    blobOpacityPeak: blob.opacityPeak,
+  }}
+>
+  .lh-root {
+    position: fixed;
+    inset: 0;
+    overflow: hidden;
+    background: var(--bg);
+  }
+  .lh-blob {
+    position: absolute;
+    width: 120vmax;
+    height: 120vmax;
+    max-width: 1800px;
+    max-height: 1800px;
+    min-width: 840px;
+    min-height: 840px;
+    border-radius: 50%;
+    filter: blur(110px);
+    will-change: transform, opacity;
+    opacity: 0;
+  }
+  .lh-blob-1 {
+    top: 0;
+    left: 0;
+    background: radial-gradient(circle at 50% 50%, var(--blob1), transparent 68%);
+    animation:
+      /*lhBreathe1 9s ease-in-out infinite 1.3s,*/
+      lhGlow 6.5s ease-in-out infinite 1.3s;
+  }
+  .lh-blob-2 {
+    bottom: 0;
+    right: 0;
+    background: radial-gradient(circle at 50% 50%, var(--blob2), transparent 68%);
+    animation:
+      /*lhBreathe2 10s ease-in-out infinite 1.45s,*/
+      lhGlow 7s ease-in-out infinite 1.45s;
+  }
+  @keyframes lhBreathe1 {
+    0%, 100% { transform: translate(-58%, -58%) scale(1); }
+    50% { transform: translate(-58%, -58%) scale(1.06); }
+  }
+  @keyframes lhBreathe2 {
+    0%, 100% { transform: translate(58%, 58%) scale(1); }
+    50% { transform: translate(58%, 58%) scale(1.07); }
+  }
+  @keyframes lhGlow {
+    0%, 100% { opacity: var(--blobOpacity); }
+    50% { opacity: var(--blobOpacityPeak); }
+  }
+  .lh-canvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    display: block;
+  }
+</style>
