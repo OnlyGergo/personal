@@ -6,11 +6,18 @@ import { hellos, metal, motion, timing } from "../config";
 
 const FONT = "Raleway";
 
-// Raleway 900 is bundled by @fontsource (imported in LiquidHello.astro);
-// make sure it's actually loaded before the canvas draws with it.
-// Pass every greeting so the latin-ext subset (ś, ć, á...) loads too, not just latin.
+// Raleway 900 is bundled by @fontsource (imported in LiquidHello.astro).
+// We load only the Latin subset first (covers "hello" and most greetings)
+// so the animation can start immediately. Extended subsets for accented
+// characters (e.g. cześć) are fetched in the background after the loop starts.
 async function loadFont() {
-  await document.fonts.load(`900 100px ${FONT}`, hellos.join(""));
+  await document.fonts.load(`900 100px ${FONT}`, "hello");
+}
+function loadExtendedFont() {
+  // Loads latin-ext (ś, ć, etc.) and any other subsets needed by the full
+  // hellos list. Called without await — the first several "hello" hold-times
+  // give ample time for this to finish before an accented word is picked.
+  document.fonts.load(`900 100px ${FONT}`, hellos.join("")).catch(() => {});
 }
 
 const VERT = `
@@ -461,6 +468,9 @@ export function startLiquid(initialCanvas: HTMLCanvasElement): () => void {
       if (cancelled) return;
       last = performance.now();
       animate();
+      // Kick off extended subset loading in the background now that the
+      // animation loop is running and the critical path is unblocked.
+      loadExtendedFont();
     });
 
   return () => {
