@@ -6,6 +6,13 @@ import { hellos, metal, motion, timing } from "../config";
 
 const FONT = "Raleway";
 
+// The text canvas is only a source for the goo (it gets thresholded and
+// blurred anyway), so it doesn't need full resolution. The 2D blur filter
+// used during morphs is by far the most expensive per-frame step on phones,
+// and its cost scales with pixel count: half-res is ~4-6x cheaper and looks
+// the same after the GPU passes.
+const TEXT_SCALE = 0.5;
+
 // Raleway 900 is bundled by @fontsource (imported in LiquidHello.astro).
 // We load only the Latin subset first (covers "hello" and most greetings)
 // so the animation can start immediately. Extended subsets for accented
@@ -131,7 +138,10 @@ type Fbo = { fb: WebGLFramebuffer; tex: WebGLTexture; w: number; h: number };
 
 const log = (...a: unknown[]) => console.warn("[liquid-hello]", ...a);
 
-type Frame = { W: number; H: number; fontPx: number; shaderTime: number; energy: number; settled: boolean };
+type Frame = {
+  W: number; H: number; fontPx: number; shaderTime: number; energy: number; settled: boolean;
+  textChanged: boolean; // false -> mask/edge field from the previous frame are still valid
+};
 type Renderer = {
   resize(W: number, H: number): void;
   render(frame: Frame): void;
@@ -237,28 +247,31 @@ function createGLRenderer(canvas: HTMLCanvasElement, textCanvas: HTMLCanvasEleme
       fboA = makeFbo(hw, hh);
       fboB = makeFbo(hw, hh);
     },
-    render({ W, H, fontPx, shaderTime, energy, settled }) {
+    render({ W, H, fontPx, shaderTime, energy, settled, textChanged }) {
       if (!fboMask || !fboA || !fboB || gl.isContextLost()) return;
-      gl.bindTexture(gl.TEXTURE_2D, textTex);
-      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, textCanvas);
+      // While a word is just sitting there, the mask and edge field don't
+      // change, so skip the upload + mask + 2 blur passes; only re-shade.
+      if (textChanged) {
+        gl.bindTexture(gl.TEXTURE_2D, textTex);
+        gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, textCanvas);
 
-      pass(progMask, fboMask, W, H, (p) => {
-        bindTex(p, "uTex", textTex, 0);
-        gl.uniform1f(p.u("uSoft"), metal.edgeSoftness);
-      });
+        pass(progMask, fboMask, W, H, (p) => {
+          bindTex(p, "uTex", textTex, 0);
+          gl.uniform1f(p.u("uSoft"), metal.edgeSoftness);
+        });
 
-      // One-off sanity check once a word is fully shown: did the text actually
-      // reach the GPU? (Privacy settings can blank canvas -> WebGL uploads.)
-      if (!verified && settled) {
-        verified = true;
-        const row = new Uint8Array(W * 4);
-        gl.readPixels(0, H >> 1, W, 1, gl.RGBA, gl.UNSIGNED_BYTE, row);
-        let max = 0;
-        for (let i = 0; i < row.length; i += 4) max = Math.max(max, row[i]);
-        const err = gl.getError();
-        if (err !== gl.NO_ERROR) throw new Error(`WebGL error 0x${err.toString(16)} during render`);
-        if (max === 0) throw new Error("text never reached the GPU (blank canvas upload - fingerprinting protection?)");
+        // One-off sanity check once a word is fully shown: did the text actually
+        // reach the GPU? (Privacy settings can blank canvas -> WebGL uploads.)
+        if (!verified && settled) {
+          verified = true;
+          const row = new Uint8Array(W * 4);
+          gl.readPixels(0, H >> 1, W, 1, gl.RGBA, gl.UNSIGNED_BYTE, row);
+          let max = 0;
+          for (let i = 0; i < row.length; i += 4) max = Math.max(max, row[i]);
+          const err = gl.getError();
+          if (err !== gl.NO_ERROR) throw new Error(`WebGL error 0x${err.toString(16)} during render`);
+          if (max === 0) throw new Error("text never reached the GPU (blank canvas upload - fingerprinting protection?)");
       }
 
       const sigma = (fontPx * 0.07) / 2;
@@ -270,6 +283,7 @@ function createGLRenderer(canvas: HTMLCanvasElement, textCanvas: HTMLCanvasEleme
         bindTex(p, "uTex", fboA!.tex, 0);
         gl.uniform2f(p.u("uDir"), 0, sigma / fboB!.h);
       });
+      }
 
       pass(progMetal, null, W, H, (p) => {
         bindTex(p, "uMask", fboMask!.tex, 0);
@@ -310,7 +324,7 @@ function createFallbackRenderer(canvas: HTMLCanvasElement, textCanvas: HTMLCanva
     render({ W, H, fontPx, shaderTime }) {
       ctx.clearRect(0, 0, W, H);
       ctx.globalCompositeOperation = "source-over";
-      ctx.drawImage(textCanvas, 0, 0);
+      ctx.drawImage(textCanvas, 0, 0, W, H);
       ctx.globalCompositeOperation = "source-in";
       const ang = (metal.angle * Math.PI) / 180;
       const len = fontPx * 3;
@@ -340,6 +354,8 @@ export function startLiquid(initialCanvas: HTMLCanvasElement): () => void {
   if (!("filter" in tctx)) log("canvas 2D filter unsupported - morph will be less gooey");
 
   let W = 1, H = 1, dpr = 1, fontPx = 100;
+  let tW = 1, tH = 1; // text canvas size (TEXT_SCALE of the output)
+  let textDirty = true;
   let renderer: Renderer;
 
   const useFallback = (reason: unknown) => {
@@ -351,14 +367,18 @@ export function startLiquid(initialCanvas: HTMLCanvasElement): () => void {
     canvas = fresh;
     renderer = createFallbackRenderer(canvas, textCanvas);
     renderer.resize(W, H);
+    textDirty = true;
   };
 
   const measure = () => {
     dpr = Math.min(window.devicePixelRatio || 1, 2);
     W = Math.max(1, Math.round(canvas.clientWidth * dpr));
     H = Math.max(1, Math.round(canvas.clientHeight * dpr));
-    textCanvas.width = W;
-    textCanvas.height = H;
+    tW = Math.max(1, Math.round(W * TEXT_SCALE));
+    tH = Math.max(1, Math.round(H * TEXT_SCALE));
+    textCanvas.width = tW;
+    textCanvas.height = tH;
+    textDirty = true;
     fontPx = Math.min(canvas.clientWidth / 3, 150) * dpr;
   };
   const resize = () => {
@@ -379,6 +399,9 @@ export function startLiquid(initialCanvas: HTMLCanvasElement): () => void {
     useFallback(e);
   }
   window.addEventListener("resize", resize);
+  // Extended font subsets arrive in the background; redraw if one lands mid-hold.
+  const onFontsLoaded = () => (textDirty = true);
+  document.fonts.addEventListener("loadingdone", onFontsLoaded);
 
   /* -------- morph state -------- */
   let morphing = false;
@@ -393,13 +416,13 @@ export function startLiquid(initialCanvas: HTMLCanvasElement): () => void {
     if (!str) return;
     const op = Math.pow(presence, 0.4);
     if (op < 0.002) return;
-    const k = fontPx / 107;
+    const k = (fontPx * TEXT_SCALE) / 107;
     const blurPx = presence <= 0 ? 100 : Math.min(8 / presence - 8, 100);
     const away = 1 - presence;
     const s = 1 + ((role === "out" ? motion.exitScale : motion.enterScale) - 1) * away;
 
     tctx.save();
-    tctx.translate(W / 2, H / 2);
+    tctx.translate(tW / 2, tH / 2);
     tctx.scale(s, s);
     tctx.filter = blurPx * k > 0.01 ? `blur(${blurPx * k}px)` : "none";
     tctx.globalAlpha = op;
@@ -408,8 +431,8 @@ export function startLiquid(initialCanvas: HTMLCanvasElement): () => void {
   };
 
   const drawText = () => {
-    tctx.clearRect(0, 0, W, H);
-    tctx.font = `900 ${fontPx}px ${FONT}`;
+    tctx.clearRect(0, 0, tW, tH);
+    tctx.font = `900 ${fontPx * TEXT_SCALE}px ${FONT}`;
     tctx.textAlign = "center";
     tctx.textBaseline = "middle";
     tctx.fillStyle = "#fff";
@@ -424,6 +447,7 @@ export function startLiquid(initialCanvas: HTMLCanvasElement): () => void {
     const now = performance.now();
     const dt = Math.min((now - last) / 1000, 0.1);
     last = now;
+    const wasMorphing = morphing;
 
     if (!morphing) {
       timer -= dt;
@@ -451,8 +475,12 @@ export function startLiquid(initialCanvas: HTMLCanvasElement): () => void {
     energy += (target - energy) * Math.min(1, dt * 3);
     shaderTime += dt * metal.speed * 1.5 * (1 + timing.transitionBoost * energy);
 
-    drawText();
-    const frame = { W, H, fontPx, shaderTime, energy, settled: !morphing && wordIn !== "" };
+    // Text only changes during a morph (plus the frame it ends on, and after
+    // a resize / late font load). The rest of the time, reuse what's on the GPU.
+    const textChanged = textDirty || morphing || wasMorphing;
+    if (textChanged) drawText();
+    textDirty = false;
+    const frame = { W, H, fontPx, shaderTime, energy, settled: !morphing && wordIn !== "", textChanged };
     try {
       renderer.render(frame);
     } catch (e) {
@@ -477,6 +505,7 @@ export function startLiquid(initialCanvas: HTMLCanvasElement): () => void {
     cancelled = true;
     cancelAnimationFrame(raf);
     window.removeEventListener("resize", resize);
+    document.fonts.removeEventListener("loadingdone", onFontsLoaded);
     renderer.dispose();
   };
 }
